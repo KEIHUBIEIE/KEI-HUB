@@ -244,6 +244,60 @@ TeamSec:Button({Title = "รีเฟรชรายชื่อ", Callback = fu
     PlayerSelect:SetValues(names) 
 end})
 
+-- [ Section: Variables ] --
+local player = game:GetService("Players").LocalPlayer
+local walkSpeedValue = 100 -- ปรับตัวเลขความเร็วที่ต้องการตรงนี้
+local speedEnabled = true   -- เปลี่ยนเป็น false ถ้าอยากให้เริ่มมาแล้วยังไม่ทำงาน
+
+-- [ Section: Main Function ] --
+local function applyWalkSpeed(character)
+    if not character then return end
+    
+    -- รอจนกว่าจะมี Humanoid ในตัวละคร
+    local humanoid = character:WaitForChild("Humanoid", 5)
+    
+    if humanoid then
+        -- ฟังก์ชันเปลี่ยนความเร็ว
+        if speedEnabled then
+            humanoid.WalkSpeed = walkSpeedValue
+        else
+            humanoid.WalkSpeed = 16 -- ค่าปกติ
+        end
+
+        -- ป้องกันโดนเกมดึงค่ากลับ (ใช้สำหรับบางแมพ)
+        humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+            if speedEnabled and humanoid.WalkSpeed ~= walkSpeedValue then
+                humanoid.WalkSpeed = walkSpeedValue
+            end
+        end)
+    end
+end
+
+-- [ Section: Auto-Update on Respawn ] --
+-- ทำงานทันทีเมื่อสคริปต์รัน
+if player.Character then
+    applyWalkSpeed(player.Character)
+end
+
+-- ทำงานทุกครั้งที่ตัวละครเกิดใหม่ (Reset)
+player.CharacterAdded:Connect(function(newCharacter)
+    applyWalkSpeed(newCharacter)
+end)
+
+-- [ Section: UI Toggle ] --
+-- วิธีเอาไปใช้กับปุ่ม เปิด/ปิด ใน Kim Hub
+-- สมมติว่าปุ่มชื่อ SpeedButton
+--[[ 
+SpeedButton.MouseButton1Click:Connect(function()
+    speedEnabled = not speedEnabled
+    if player.Character then
+        applyWalkSpeed(player.Character)
+    end
+    print("Speed Status:", speedEnabled)
+end)
+]]
+
+
 -- Settings Section
 local AimSetSec = Tabs.Settings:Section({Title = "Aimbot Config"})
 AimSetSec:Toggle({Title = "Smooth Lock", Value = true, Callback = function(v) getgenv().SmoothnessEnabled = v end})
