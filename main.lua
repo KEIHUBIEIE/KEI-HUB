@@ -1,8 +1,8 @@
 --[[
-    KEI HUB | PRO MAX EDITION (WindUI)
-    - Combat: Aimbot (Distance), Aim Part, RGB FOV (ใหม่!)
-    - Visuals: RGB Name, ESP Box (Fixed), Inventory, Health ESP
-    - Team: Manual & Auto Team Check
+    KEI HUB | PRO MAX EDITION (WindUI) - FIXED VISUALS
+    - แก้ไข: Health ESP ไม่ทำงาน
+    - แก้ไข: มองของในมือ (Inventory) ไม่ขึ้น
+    - ระบบเดิม: Aimbot, Wall Check, RGB FOV ครบถ้วน
 --]]
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -12,6 +12,7 @@ if getgenv().AimCircle then pcall(function() getgenv().AimCircle:Remove() end) e
 getgenv().KEIHUB_LOADED = true
 getgenv().ExcludedPlayers = {} 
 getgenv().AimPart = "Head"
+getgenv().WallCheck = false
 
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
@@ -24,6 +25,24 @@ local function isPlayerExcluded(player)
         if excluded == player then return true end
     end
     if getgenv().AutoTeamCheck and player.Team ~= nil and player.Team == Client.Team then
+        return true
+    end
+    return false
+end
+
+-- [ ฟังชั่นเช็คกำแพง (Wall Check) ]
+local function isVisible(part)
+    if not getgenv().WallCheck then return true end
+    local lookVector = (part.Position - Camera.CFrame.Position).Unit
+    local distance = (part.Position - Camera.CFrame.Position).Magnitude
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {Client.Character, Camera}
+    
+    local result = workspace:Raycast(Camera.CFrame.Position, lookVector * distance, raycastParams)
+    if result and result.Instance:IsDescendantOf(part.Parent) then
+        return true
+    elseif not result then
         return true
     end
     return false
@@ -43,7 +62,7 @@ local function CreateFOV()
 end
 getgenv().AimCircle = CreateFOV()
 
--- [ ลอจิก Aimbot ล็อคคนที่ใกล้ที่สุด ]
+-- [ ลอจิก Aimbot ]
 local function GetClosestPlayer()
     local Target = nil
     local MaxDist = getgenv().AimbotFOV or 150
@@ -56,7 +75,7 @@ local function GetClosestPlayer()
             local Part = v.Character:FindFirstChild(getgenv().AimPart)
             if Part then
                 local ScreenPos, OnScreen = Camera:WorldToViewportPoint(Part.Position)
-                if OnScreen then
+                if OnScreen and isVisible(Part) then
                     local DistanceFromMe = (Client.Character.HumanoidRootPart.Position - Part.Position).Magnitude
                     local MouseDist = (Vector2.new(ScreenPos.X, ScreenPos.Y) - Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)).Magnitude
                     
@@ -77,12 +96,11 @@ RunService.RenderStepped:Connect(function()
     local RGBColor = Color3.fromHSV(Hue, 1, 1)
     local GreenColor = Color3.fromRGB(0, 255, 127)
 
-    -- 1. FOV (รองรับระบบรุ้ง)
+    -- 1. FOV
     if getgenv().AimCircle then
         getgenv().AimCircle.Visible = getgenv().ShowFOV or false
         getgenv().AimCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
         getgenv().AimCircle.Radius = getgenv().AimbotFOV or 150
-        -- เช็คว่าเปิดโหมดรุ้งหรือไม่
         getgenv().AimCircle.Color = getgenv().FOV_RGB and RGBColor or Color3.fromRGB(255, 255, 255)
     end
 
@@ -95,52 +113,68 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- 3. Visuals & ESP
+    -- 3. Visuals & ESP (FIXED SECTION)
     for _, p in pairs(Players:GetPlayers()) do
-        if p ~= Client and p.Character and p.Character:FindFirstChild("Humanoid") then
+        if p ~= Client and p.Character and p.Character:FindFirstChild("Humanoid") and p.Character:FindFirstChild("HumanoidRootPart") then
             local Hum = p.Character.Humanoid
+            local Root = p.Character.HumanoidRootPart
             local isTeam = isPlayerExcluded(p)
             local CurrentColor = isTeam and GreenColor or RGBColor
             
-            -- Name & Health ESP
-            if getgenv().ShowNamesRGB and p.Character:FindFirstChild("HumanoidRootPart") then
-                local tag = p.Character.HumanoidRootPart:FindFirstChild("KEI_ESP")
+            -- จัดการ BillboardGui
+            local tag = Root:FindFirstChild("KEI_ESP")
+            if (getgenv().ShowNamesRGB or getgenv().ShowHealthESP or getgenv().ShowInventory) then
                 if not tag then
-                    tag = Instance.new("BillboardGui", p.Character.HumanoidRootPart)
+                    tag = Instance.new("BillboardGui", Root)
                     tag.Name = "KEI_ESP"
-                    tag.Size = UDim2.new(0, 250, 0, 70)
+                    tag.Size = UDim2.new(0, 200, 0, 70)
                     tag.AlwaysOnTop = true
                     tag.StudsOffset = Vector3.new(0, 3, 0)
+                    
                     local l = Instance.new("TextLabel", tag)
-                    l.Name = "Label"
+                    l.Name = "MainLabel"
                     l.Size = UDim2.new(1, 0, 0.5, 0)
                     l.BackgroundTransparency = 1
                     l.TextSize = 14
                     l.Font = Enum.Font.GothamBold
-                    local hp = Instance.new("TextLabel", tag)
-                    hp.Name = "HPLabel"
-                    hp.Size = UDim2.new(1, 0, 0.4, 0)
-                    hp.Position = UDim2.new(0, 0, 0.5, 0)
-                    hp.BackgroundTransparency = 1
-                    hp.TextSize = 12
-                    hp.Font = Enum.Font.GothamBold
+                    l.TextColor3 = Color3.new(1,1,1)
+                    
+                    local h = Instance.new("TextLabel", tag)
+                    h.Name = "HPLabel"
+                    h.Size = UDim2.new(1, 0, 0.4, 0)
+                    h.Position = UDim2.new(0, 0, 0.5, 0)
+                    h.BackgroundTransparency = 1
+                    h.TextSize = 12
+                    h.Font = Enum.Font.GothamBold
+                end
+
+                -- อัปเดตข้อมูลของและชื่อ
+                local ToolName = p.Character:FindFirstChildOfClass("Tool") and p.Character:FindFirstChildOfClass("Tool").Name or "None"
+                local DisplayText = ""
+                if getgenv().ShowNamesRGB then DisplayText = p.Name end
+                if getgenv().ShowInventory then 
+                    DisplayText = DisplayText .. (DisplayText ~= "" and "\n" or "") .. "[" .. ToolName .. "]"
                 end
                 
-                local ToolName = p.Character:FindFirstChildOfClass("Tool") and p.Character:FindFirstChildOfClass("Tool").Name or "None"
-                tag.Label.Text = p.Name .. (getgenv().ShowInventory and " [" .. ToolName .. "]" or "")
-                tag.Label.TextColor3 = CurrentColor
-                
+                tag.MainLabel.Text = DisplayText
+                tag.MainLabel.TextColor3 = CurrentColor
+                tag.MainLabel.Visible = (DisplayText ~= "")
+
+                -- อัปเดตเลือด (FIXED)
                 if getgenv().ShowHealthESP then
                     tag.HPLabel.Visible = true
-                    tag.HPLabel.Text = "HP: " .. math.floor(Hum.Health)
-                    tag.HPLabel.TextColor3 = Color3.fromHSV(math.clamp(Hum.Health/Hum.MaxHealth, 0, 1) * 0.3, 1, 1)
+                    tag.HPLabel.Text = "HP: " .. math.floor(Hum.Health) .. " / " .. math.floor(Hum.MaxHealth)
+                    local hpPercent = math.clamp(Hum.Health / Hum.MaxHealth, 0, 1)
+                    tag.HPLabel.TextColor3 = Color3.fromHSV(hpPercent * 0.3, 1, 1) -- สีเปลี่ยนจากเขียวไปแดง
                 else
                     tag.HPLabel.Visible = false
                 end
                 tag.Enabled = true
+            else
+                if tag then tag:Destroy() end
             end
 
-            -- ESP Box
+            -- ESP Box (คงเดิม)
             if getgenv().ShowESPBox then
                 local box = p.Character:FindFirstChild("KEI_BOX_ADORN")
                 if not box then
@@ -178,9 +212,10 @@ local Tabs = {
     Settings = Window:Tab({Title = "Settings", Icon = "settings"})
 }
 
--- Combat Section (เพิ่ม FOV รุ้ง)
+-- Combat Section
 local CombatSec = Tabs.Combat:Section({Title = "Aimbot Settings"})
 CombatSec:Toggle({Title = "เปิดใช้งาน Aimbot", Value = false, Callback = function(v) getgenv().AimbotEnabled = v end})
+CombatSec:Toggle({Title = "เช็คกำแพง (Wall Check)", Value = false, Callback = function(v) getgenv().WallCheck = v end})
 CombatSec:Toggle({Title = "Auto Team Check", Value = false, Callback = function(v) getgenv().AutoTeamCheck = v end})
 CombatSec:Dropdown({Title = "ตำแหน่งล็อคเป้า", Values = {"Head", "HumanoidRootPart"}, Callback = function(v) getgenv().AimPart = v end})
 
@@ -189,7 +224,7 @@ FOVSec:Toggle({Title = "แสดงวงกลม FOV", Value = false, Callbac
 FOVSec:Toggle({Title = "FOV สีรุ้ง (RGB)", Value = false, Callback = function(v) getgenv().FOV_RGB = v end})
 Tabs.Combat:Slider({Title = "ขนาด FOV", Step = 1, Value = {Min = 50, Max = 800, Default = 150}, Callback = function(v) getgenv().AimbotFOV = v end})
 
--- Visuals Section
+-- Visuals Section (FIXED CALLBACKS)
 local VisualSec = Tabs.Visuals:Section({Title = "Visuals & ESP"})
 VisualSec:Toggle({Title = "มองชื่อ (Name ESP)", Value = false, Callback = function(v) getgenv().ShowNamesRGB = v end})
 VisualSec:Toggle({Title = "มองเลือด (Health ESP)", Value = false, Callback = function(v) getgenv().ShowHealthESP = v end})
@@ -214,4 +249,4 @@ local AimSetSec = Tabs.Settings:Section({Title = "Aimbot Config"})
 AimSetSec:Toggle({Title = "Smooth Lock", Value = true, Callback = function(v) getgenv().SmoothnessEnabled = v end})
 Tabs.Settings:Slider({Title = "ความนิ่ง", Step = 1, Value = {Min = 1, Max = 20, Default = 5}, Callback = function(v) getgenv().SmoothAmount = v end})
 
-WindUI:Notify({Title = "Kei Hub", Content = "เพิ่มระบบ FOV สีรุ้ง เรียบร้อยแล้วครับ!", Duration = 5})
+WindUI:Notify({Title = "Kei Hub", Content = "แก้ไขระบบ ESP เลือดและไอเทมเรียบร้อย!", Duration = 5})
