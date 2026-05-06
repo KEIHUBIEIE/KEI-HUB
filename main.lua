@@ -2,8 +2,10 @@ if not game:IsLoaded() then game.Loaded:Wait() end
 
 -- [ SETTINGS ]
 getgenv().SilentAimEnabled = false
+getgenv().HitSoundEnabled = true -- เปิด/ปิดเสียงยิงโดน
+getgenv().HitSoundID = "rbxassetid://160432334" -- ID เสียง (เสียง Bell)
 getgenv().AimPart = "Head"
-getgenv().SilentAimFOV = 150 -- ปรับตามรูปตัวอย่างที่คุณส่งมา
+getgenv().SilentAimFOV = 150
 getgenv().RGB_Speed = 1.5
 
 getgenv().ShowVisualsMaster = false
@@ -21,6 +23,19 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local WeaponHit = ReplicatedStorage:WaitForChild("Eventos", 5):WaitForChild("WeaponHit", 5)
 
 -- [ FUNCTIONS ]
+local function PlayHitSound()
+    if getgenv().HitSoundEnabled then
+        local Sound = Instance.new("Sound")
+        Sound.SoundId = getgenv().HitSoundID
+        Sound.Volume = 2
+        Sound.Parent = game:GetService("SoundService")
+        Sound:Play()
+        Sound.Ended:Connect(function()
+            Sound:Destroy()
+        end)
+    end
+end
+
 local function GetClosestPlayer()
     local Target = nil
     local ShortestDist = getgenv().SilentAimFOV
@@ -122,7 +137,11 @@ OldNC = hookmetamethod(game, "__namecall", function(self, ...)
         if T and T:FindFirstChild(getgenv().AimPart) then
             local P = T[getgenv().AimPart]
             local Origin = (Client.Character and Client.Character:FindFirstChild("Head")) and Client.Character.Head.Position or Vector3.new(0,0,0)
+            
+            -- เมื่อกดยิงและระบบ Silent Aim ทำงาน
             CreateBeam(Origin, P.Position)
+            PlayHitSound() -- เล่นเสียงเมื่อยิงโดน (Silent Aim ทำงาน)
+            
             local NA = {A[1], {p = P.Position, part = P, h = T.Humanoid, d = (Origin - P.Position).Magnitude, sid = A[2] and A[2].sid or "Bullet"}}
             task.spawn(function() WeaponHit:FireServer(unpack(NA)) end)
         end
@@ -133,11 +152,10 @@ end)
 -- [ UI WindUI ]
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
--- ใส่รูป BR MODS ของคุณที่นี่
 local Window = WindUI:CreateWindow({ 
     Title = "KEI HUB", 
     Author = "Kim", 
-    Icon = "rbxassetid://132717838566270", -- นำเลข ID รูป BR MODS มาใส่ตรงนี้
+    Icon = "rbxassetid://132717838566270", 
     Theme = "Dark" 
 })
 
@@ -149,11 +167,12 @@ local Tabs = {
 
 local AimS = Tabs.Main:Section({Title = "Main Combat"})
 AimS:Toggle({Title = "Silent Aim", Callback = function(v) getgenv().SilentAimEnabled = v end})
+AimS:Toggle({Title = "Hit Sound", Value = true, Callback = function(v) getgenv().HitSoundEnabled = v end}) -- ปุ่มเปิด/ปิดเสียง
 AimS:Slider({Title = "FOV Radius", Step = 1, Value = {Min = 30, Max = 800, Default = 150}, Callback = function(v) getgenv().SilentAimFOV = v end})
 
-local EspS = Tabs.Visuals:Section({Title = "ESP"})
+local EspS = Tabs.Visuals:Section({Title = "ESP Master"})
 EspS:Toggle({Title = "Enable ESP", Callback = function(v) getgenv().ShowVisualsMaster = v end})
-EspS:Toggle({Title = "2D Box", Callback = function(v) getgenv().ESP_Box = v end})
+EspS:Toggle({Title = "Corner Box", Callback = function(v) getgenv().ESP_Box = v end})
 EspS:Toggle({Title = "Player Names", Callback = function(v) getgenv().ESP_Name = v end})
 
 local MoveS = Tabs.Settings:Section({Title = "Misc"})
@@ -193,4 +212,4 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-WindUI:Notify({Title = "KEI HUB", Content = "KEI Hub UI Loaded!", Duration = 3})
+WindUI:Notify({Title = "KEI HUB", Content = "Hit Sound & Silent Aim Ready!", Duration = 3})
