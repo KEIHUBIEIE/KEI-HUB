@@ -1,0 +1,133 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Camera = workspace.CurrentCamera
+
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	Camera = workspace.CurrentCamera
+end)
+
+local Settings = {
+	Enabled = true,
+	FOVRadius = 140,
+}
+
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Visible = true
+FOVCircle.Thickness = 1
+FOVCircle.Radius = Settings.FOVRadius
+FOVCircle.Transparency = 0.7
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Filled = false
+FOVCircle.NumSides = 64
+
+local EntityService = require(ReplicatedStorage.Remote.EntityService)
+local ClientShootableComponent = require(ReplicatedStorage.Client.CombatController.ClientComponent.ClientShootableComponent)
+
+local function GetEntityPosition(EntityModel)
+	local TargetPart = EntityModel:FindFirstChild("HumanoidRootPart") or EntityModel:FindFirstChild("Head")
+	if TargetPart and TargetPart:IsA("BasePart") then 
+		return TargetPart, TargetPart.Position 
+	end
+	return nil, nil
+end
+
+local function IsInFOV(WorldPosition)
+	if not Camera then return false, math.huge end
+	local ScreenPos, OnScreen = Camera:WorldToViewportPoint(WorldPosition)
+	if not OnScreen then return false, math.huge end
+	
+	-- [แก้ไข] เปลี่ยนจากพิกัดเมาส์มาใช้จุดกึ่งกลางหน้าจอแทน
+	local ScreenCenter = Camera.ViewportSize / 2
+	local Distance = (Vector2.new(ScreenPos.X, ScreenPos.Y) - ScreenCenter).Magnitude
+	return Distance <= Settings.FOVRadius, Distance
+end
+
+local function GetClosestEnemyInFOV()
+	local LocalEntity = EntityService.GetLocalEntity()
+	if not LocalEntity or not LocalEntity.World or not LocalEntity.World.EntitiesByTeam then return nil end
+	local ClosestTarget = nil
+	local ClosestDistance = math.huge
+	for _, TeamDict in pairs(LocalEntity.World.EntitiesByTeam) do
+		local Items = TeamDict._items or TeamDict
+		for _, Entity in pairs(Items) do
+			if not EntityService.IsLocalEntity(Entity) and Entity:IsAlive() then
+				local Inst = Entity.Instance
+				local Character = (Inst and Inst:IsA("Player")) and Inst.Character or Inst
+				if Character then
+					local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+					if Humanoid and Humanoid.Health > 0 then
+						local Part, Position = GetEntityPosition(Character)
+						if Position then
+							local InFOV, Distance = IsInFOV(Position)
+							if InFOV and Distance < ClosestDistance then
+								ClosestTarget = { Part = Part, Position = Position }
+								ClosestDistance = Distance
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return ClosestTarget
+end
+
+local SilentTarget = nil
+
+RunService.RenderStepped:Connect(function()
+	-- [แก้ไข] ล็อกตำแหน่งวงกลม FOV ให้อยู่ตรงกลางหน้าจอตลอดเวลา
+	if Camera then
+		FOVCircle.Position = Camera.ViewportSize / 2
+	end
+	FOVCircle.Radius = Settings.FOVRadius
+	FOVCircle.Visible = Settings.Enabled
+end)
+
+local OrigLocalShoot = ClientShootableComponent.LocalShoot
+local OrigOriginFn, OrigTargetFn
+for i = 1, 20 do
+	local success, val = pcall(debug.getupvalue, OrigLocalShoot, i)
+	if success and type(val) == "function" then
+		local testSuccess, ret1, ret2, ret3 = pcall(val)
+		if testSuccess then
+			if typeof(ret1) == "CFrame" and typeof(ret3) == "table" then
+				OrigOriginFn = val
+			elseif typeof(ret1) == "Vector3" and typeof(ret2) == "Instance" then
+				OrigTargetFn = val
+			end
+		end
+	end
+end
+
+if OrigOriginFn then
+	local OldOriginFn
+	OldOriginFn = hookfunction(OrigOriginFn, function(...)
+		local cf, pos, meta = OldOriginFn(...)
+		if SilentTarget and Settings.Enabled then
+			return CFrame.lookAt(cf.Position, SilentTarget.Position), pos, meta
+		end
+		return cf, pos, meta
+	end)
+end
+
+if OrigTargetFn then
+	local OldTargetFn
+	OldTargetFn = hookfunction(OrigTargetFn, function(...)
+		if SilentTarget and Settings.Enabled then
+			return SilentTarget.Position, SilentTarget.Part
+		end
+		return OldTargetFn(...)
+	end)
+end
+
+local OldLocalShoot
+OldLocalShoot = hookfunction(ClientShootableComponent.LocalShoot, function(Self, ...)
+	if Settings.Enabled then
+		SilentTarget = GetClosestEnemyInFOV()
+	end
+	local Result = OldLocalShoot(Self, ...)
+	SilentTarget = nil
+	return Result
+end)
