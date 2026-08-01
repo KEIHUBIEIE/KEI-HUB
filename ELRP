@@ -1,0 +1,366 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+
+local Config = {
+    -- Silent Aim
+    SilentAim = false,
+    FovVisible = false,
+    FovRadius = 150,
+    TracerVisible = false,
+    TargetPart = "Head",
+    
+    -- ESP
+    ESPEnabled = false,
+    ESPBox = false,
+    ESPName = false,
+    ESPHealth = false,
+    ESPDistance = false,
+    MaxDistance = 500
+}
+
+-- ==========================================
+-- [1] UI Setup (FOV & Tracer)
+-- ==========================================
+local oldGui = CoreGui:FindFirstChild("FOV_UI")
+if oldGui then oldGui:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "FOV_UI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function() ScreenGui.Parent = CoreGui end)
+if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local FOVFrame = Instance.new("Frame", ScreenGui)
+local UICorner = Instance.new("UICorner", FOVFrame)
+local UIStroke = Instance.new("UIStroke", FOVFrame)
+
+FOVFrame.Name = "FOVCircle"
+FOVFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+FOVFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+FOVFrame.BackgroundTransparency = 1 
+FOVFrame.Visible = false
+
+UICorner.CornerRadius = UDim.new(1, 0)
+UIStroke.Color = Color3.fromRGB(255, 255, 255)
+UIStroke.Thickness = 1.5
+
+local tracerLine = Instance.new("Frame", ScreenGui)
+tracerLine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+tracerLine.BorderSizePixel = 0
+tracerLine.AnchorPoint = Vector2.new(0.5, 0.5)
+tracerLine.Visible = false
+
+-- ==========================================
+-- [2] Optimized ESP & Target Cache System
+-- ==========================================
+local PlayerCache = {}
+local TargetPosition = nil
+
+local function createESP(player)
+    local folder = Instance.new("Folder", ScreenGui)
+    folder.Name = player.Name
+
+    local box = Instance.new("Frame", folder)
+    box.BackgroundTransparency = 1
+    local boxStroke = Instance.new("UIStroke", box)
+    boxStroke.Color = Color3.fromRGB(255, 255, 255)
+    boxStroke.Thickness = 1
+
+    local hpBg = Instance.new("Frame", folder)
+    hpBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    hpBg.BorderSizePixel = 1
+    local hpFill = Instance.new("Frame", hpBg)
+    hpFill.BorderSizePixel = 0
+
+    local nameText = Instance.new("TextLabel", folder)
+    nameText.BackgroundTransparency = 1
+    nameText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameText.TextStrokeTransparency = 0.3
+    nameText.Font = Enum.Font.Arcade
+    nameText.TextSize = 14
+
+    local distText = Instance.new("TextLabel", folder)
+    distText.BackgroundTransparency = 1
+    distText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    distText.TextStrokeTransparency = 0.3
+    distText.Font = Enum.Font.Arcade
+    distText.TextSize = 12
+
+    -- ซ่อนไว้ก่อน
+    box.Visible = false
+    hpBg.Visible = false
+    nameText.Visible = false
+    distText.Visible = false
+
+    PlayerCache[player] = {
+        Folder = folder,
+        Box = box,
+        HpBg = hpBg,
+        HpFill = hpFill,
+        Name = nameText,
+        Dist = distText,
+        -- Caching Parts
+        Character = nil,
+        Root = nil,
+        Head = nil,
+        Humanoid = nil
+    }
+end
+
+local function updatePlayerCache(player, character)
+    if PlayerCache[player] then
+        if character then
+            PlayerCache[player].Character = character
+            PlayerCache[player].Root = character:WaitForChild("HumanoidRootPart", 5)
+            PlayerCache[player].Head = character:WaitForChild("Head", 5)
+            PlayerCache[player].Humanoid = character:WaitForChild("Humanoid", 5)
+        else
+            PlayerCache[player].Character = nil
+            PlayerCache[player].Root = nil
+            PlayerCache[player].Head = nil
+            PlayerCache[player].Humanoid = nil
+        end
+    end
+end
+
+-- Setup existing players
+for _, p in ipairs(Players:GetPlayers()) do
+    if p ~= LocalPlayer then
+        createESP(p)
+        if p.Character then updatePlayerCache(p, p.Character) end
+        p.CharacterAdded:Connect(function(char) updatePlayerCache(p, char) end)
+    end
+end
+
+-- Handle joining/leaving
+Players.PlayerAdded:Connect(function(p)
+    if p ~= LocalPlayer then
+        createESP(p)
+        p.CharacterAdded:Connect(function(char) updatePlayerCache(p, char) end)
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+    if PlayerCache[p] then
+        PlayerCache[p].Folder:Destroy()
+        PlayerCache[p] = nil
+    end
+end)
+
+local function hideESP(esp)
+    if esp.Box.Visible then esp.Box.Visible = false end
+    if esp.Name.Visible then esp.Name.Visible = false end
+    if esp.HpBg.Visible then esp.HpBg.Visible = false end
+    if esp.Dist.Visible then esp.Dist.Visible = false end
+end
+
+-- ==========================================
+-- [3] Master Render Loop (All in One = No Lag)
+-- ==========================================
+RunService.RenderStepped:Connect(function()
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+
+    local screenCenter = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+    -- อัพเดท FOV UI
+    if Config.FovVisible then
+        FOVFrame.Size = UDim2.new(0, Config.FovRadius * 2, 0, Config.FovRadius * 2)
+        FOVFrame.Position = UDim2.new(0, screenCenter.X, 0, screenCenter.Y)
+        FOVFrame.Visible = true
+    else
+        FOVFrame.Visible = false
+    end
+
+    local closestDist = Config.FovRadius
+    local newTargetPos = nil
+    local newTargetScreenPos = nil
+
+    -- ลูปเดียวจัดการทั้ง ESP และ ค้นหาเป้าหมาย
+    for player, esp in pairs(PlayerCache) do
+        local isAlive = esp.Humanoid and esp.Humanoid.Health > 0
+        local hasParts = esp.Root and esp.Head
+        
+        if isAlive and hasParts and myRoot then
+            local dist = (myRoot.Position - esp.Root.Position).Magnitude
+            
+            -- [ESP Logic]
+            if Config.ESPEnabled and dist <= Config.MaxDistance then
+                local rootPos, onScreen = cam:WorldToViewportPoint(esp.Root.Position)
+                
+                if onScreen and rootPos.Z > 0 then
+                    local headPos = cam:WorldToViewportPoint(esp.Head.Position + Vector3.new(0, 0.5, 0))
+                    local legPos = cam:WorldToViewportPoint(esp.Root.Position - Vector3.new(0, 3, 0))
+                    
+                    local height = math.abs(headPos.Y - legPos.Y)
+                    local width = height / 1.8
+                    
+                    if Config.ESPBox then
+                        esp.Box.Size = UDim2.new(0, width, 0, height)
+                        esp.Box.Position = UDim2.new(0, rootPos.X - width / 2, 0, headPos.Y)
+                        esp.Box.Visible = true
+                    else esp.Box.Visible = false end
+                    
+                    if Config.ESPName then
+                        esp.Name.Text = player.Name
+                        esp.Name.Position = UDim2.new(0, rootPos.X, 0, headPos.Y - 18)
+                        esp.Name.Visible = true
+                    else esp.Name.Visible = false end
+                    
+                    if Config.ESPDistance then
+                        esp.Dist.Text = math.floor(dist) .. "m"
+                        esp.Dist.Position = UDim2.new(0, rootPos.X, 0, legPos.Y + 2)
+                        esp.Dist.Visible = true
+                    else esp.Dist.Visible = false end
+
+                    if Config.ESPHealth then
+                        local hpPercent = math.clamp(esp.Humanoid.Health / esp.Humanoid.MaxHealth, 0, 1)
+                        local barWidth = math.clamp(math.floor(height / 15), 1, 3) 
+                        
+                        esp.HpBg.Size = UDim2.new(0, barWidth, 0, height)
+                        esp.HpBg.Position = UDim2.new(0, (rootPos.X - width / 2) - barWidth - 3, 0, headPos.Y)
+                        
+                        esp.HpFill.Size = UDim2.new(1, 0, hpPercent, 0)
+                        esp.HpFill.Position = UDim2.new(0, 0, 1 - hpPercent, 0)
+
+                        if hpPercent > 0.5 then esp.HpFill.BackgroundColor3 = Color3.fromRGB(0, 255, 120)
+                        elseif hpPercent > 0.2 then esp.HpFill.BackgroundColor3 = Color3.fromRGB(255, 200, 0)
+                        else esp.HpFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50) end
+
+                        esp.HpBg.Visible = true
+                    else esp.HpBg.Visible = false end
+                else
+                    hideESP(esp)
+                end
+            else
+                hideESP(esp)
+            end
+
+            -- [Silent Aim Logic]
+            if Config.SilentAim then
+                local targetPart = (Config.TargetPart == "Head") and esp.Head or esp.Root
+                local screenPos, onScreenAim = cam:WorldToViewportPoint(targetPart.Position)
+                
+                if onScreenAim then
+                    local fovDist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                    if fovDist <= closestDist then
+                        closestDist = fovDist
+                        newTargetPos = targetPart.Position
+                        newTargetScreenPos = Vector2.new(screenPos.X, screenPos.Y)
+                    end
+                end
+            end
+        else
+            hideESP(esp)
+        end
+    end
+
+    TargetPosition = newTargetPos
+
+    -- อัพเดท Tracer
+    if TargetPosition and Config.TracerVisible and Config.SilentAim then
+        local distance = (newTargetScreenPos - screenCenter).Magnitude
+        local centerPos = (screenCenter + newTargetScreenPos) / 2
+        local angle = math.deg(math.atan2(newTargetScreenPos.Y - screenCenter.Y, newTargetScreenPos.X - screenCenter.X))
+
+        tracerLine.Size = UDim2.new(0, distance, 0, 1.5)
+        tracerLine.Position = UDim2.new(0, centerPos.X, 0, centerPos.Y)
+        tracerLine.Rotation = angle
+        tracerLine.Visible = true
+    else
+        tracerLine.Visible = false
+    end
+end)
+
+-- ==========================================
+-- [4] Fast-Exit Silent Aim Hook
+-- ==========================================
+local NamecallHook
+NamecallHook = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+    -- Fast Exit: ถ้าปิดโหมดหรือไม่มีเป้าหมาย ให้ข้ามทันทีเพื่อประหยัดทรัพยากร
+    if not Config.SilentAim or not TargetPosition then 
+        return NamecallHook(self, ...) 
+    end
+
+    local method = getnamecallmethod()
+    if method == "Raycast" and self == Workspace then
+        local args = { ... }
+        local origin = args[1]
+        local originalDirection = args[2]
+        
+        if origin and originalDirection then
+            local directionToTarget = (TargetPosition - origin)
+            args[2] = directionToTarget.Unit * originalDirection.Magnitude
+            
+            return NamecallHook(self, unpack(args))
+        end
+    end
+
+    return NamecallHook(self, ...)
+end))
+
+-- ==========================================
+-- [5] UI Library Setup (Kei Hub)
+-- ==========================================
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local Window = Library:CreateWindow({
+    Title = "Kei Hub",
+    Footer = "Universal Edition (Optimized)",
+    Icon = 95816097006870,
+    NotifySide = "Right",
+    ShowCustomCursor = true,
+})
+
+local Tabs = {
+    Combat = Window:AddTab("Combat", "crosshair"),
+    Visuals = Window:AddTab("Visuals", "eye"),
+    ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
+}
+
+-- Tab 1: Combat
+local CombatGroup = Tabs.Combat:AddLeftGroupbox("Silent Aim", "crosshair")
+CombatGroup:AddToggle("T_Silent", { Text = "Enable Silent Aim (Raycast)", Default = false, Callback = function(v) Config.SilentAim = v end })
+CombatGroup:AddToggle("T_FOV", { Text = "Show FOV Circle", Default = false, Callback = function(v) Config.FovVisible = v end })
+CombatGroup:AddToggle("T_Tracer", { Text = "Show Tracer Line", Default = false, Callback = function(v) Config.TracerVisible = v end })
+CombatGroup:AddSlider("S_FOV", { Text = "FOV Radius", Default = 150, Min = 10, Max = 500, Rounding = 0, Callback = function(v) Config.FovRadius = tonumber(v) or 150 end })
+CombatGroup:AddDropdown("D_TargetPart", { Values = {"Head", "HumanoidRootPart"}, Default = 1, Multi = false, Text = "Target Part", Callback = function(v) Config.TargetPart = v end })
+
+-- Tab 2: Visuals
+local VisualsGroup = Tabs.Visuals:AddLeftGroupbox("Player ESP", "eye")
+VisualsGroup:AddToggle("E_Main", { Text = "Enable ESP", Default = false, Callback = function(v) Config.ESPEnabled = v end })
+VisualsGroup:AddToggle("E_Box", { Text = "Show 2D Boxes", Default = false, Callback = function(v) Config.ESPBox = v end })
+VisualsGroup:AddToggle("E_Name", { Text = "Show Names", Default = false, Callback = function(v) Config.ESPName = v end })
+VisualsGroup:AddToggle("E_Health", { Text = "Show Health Bar", Default = false, Callback = function(v) Config.ESPHealth = v end })
+VisualsGroup:AddToggle("E_Dist", { Text = "Show Distance", Default = false, Callback = function(v) Config.ESPDistance = v end })
+VisualsGroup:AddSlider("S_Dist", { Text = "Max Render Distance", Default = 500, Min = 50, Max = 1000, Rounding = 0, Callback = function(v) Config.MaxDistance = tonumber(v) or 500 end })
+
+-- Tab 3: UI Settings
+local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Menu", "wrench")
+MenuGroup:AddToggle("KeybindMenuOpen", { Default = Library.KeybindFrame.Visible, Text = "Open Keybind Menu", Callback = function(value) Library.KeybindFrame.Visible = value end })
+MenuGroup:AddToggle("ShowCustomCursor", { Text = "Custom Cursor", Default = true, Callback = function(Value) Library.ShowCustomCursor = Value end })
+MenuGroup:AddButton("Unload", function()
+    for _, esp in pairs(PlayerCache) do esp.Folder:Destroy() end
+    Library:Unload()
+end)
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+ThemeManager:SetFolder("KeiHub")
+SaveManager:SetFolder("KeiHub/game")
+SaveManager:BuildConfigSection(Tabs["UI Settings"])
+ThemeManager:ApplyToTab(Tabs["UI Settings"])
+SaveManager:LoadAutoloadConfig()
+
